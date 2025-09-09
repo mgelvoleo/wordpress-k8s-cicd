@@ -1,42 +1,52 @@
-name: CI/CD for WordPress on K8s
+name: CI/CD WordPress on K8s
 
 on:
   push:
     branches:
-      - main   # run pipeline on pushes to main branch
+      - main
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v2
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Optional: Build custom WordPress image
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Build and push Docker image
-      run: |
-        IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/wordpress-k8s
-        docker build -t $IMAGE_NAME:${{ github.sha }} .
-        docker push $IMAGE_NAME:${{ github.sha }}
+      - name: Build and Push WordPress image
+        run: |
+          IMAGE=mgelvoleo/wordpress:latest
+          docker build -t $IMAGE .
+          docker push $IMAGE
 
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
-      with:
-        version: v1.30.0
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Configure kubeconfig
-      run: |
-        echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > $HOME/.kube/config
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.30.0'
 
-    - name: Deploy to Kubernetes
-      run: |
-        IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/wordpress-k8s:${{ github.sha }}
-        kubectl set image deployment/wordpress wordpress=$IMAGE_NAME -n wordpress
-        kubectl rollout status deployment/wordpress -n wordpress
+      - name: Kubeconfig setup
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/mysql-pvc.yaml
+          kubectl apply -f k8s/mysql-deployment.yaml
+          kubectl apply -f k8s/wordpress-pvc.yaml
+          kubectl apply -f k8s/wordpress-deployment.yaml
 
